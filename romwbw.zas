@@ -1,0 +1,294 @@
+;------------------------------------------------------------------------
+;  romwbw.asm 
+;  See romwbw.inc for descriptions
+;  Copyright (c)2023 Kevin Boone, GPL v3.0
+;------------------------------------------------------------------------
+
+	; ROMWBW stores a pointer to a magic number at 0xFFFE.
+	RWBW_MAGIC_PTR	equ 0fffeH
+	; And these are the two magic numbers:
+	RWBW_MAGIC_1	equ 057H
+	RWBW_MAGIC_2	equ 0A8H
+
+ 	; Code for 'character in'
+	RWBW_CIN	equ 00H
+ 	; Code for 'character out'
+	RWBW_COUT	equ 01H
+ 	; Code for 'character status'
+	RWBW_CSTAT	equ 02H
+	; Code for the 'Get RTC' API call
+	RWBW_GRTC	equ 20H
+	; Code for the 'Put RTC' API call
+	RWBW_PRTC	equ 21H
+
+
+	global _rwbw_chk
+	global _rwbw_getrtc
+	global _rwbw_cin
+	global _rwbw_cout
+	global _rwbw_cstat
+
+psect text
+
+;------------------------------------------------------------------------
+; rwbw_chk
+; Check whether we are running on a ROMWBW machine 
+;------------------------------------------------------------------------
+rwbw_chk:
+	PUSH	HL
+	LD	HL, (RWBW_MAGIC_PTR) 
+	LD	A, (HL)
+	CP	RWBW_MAGIC_1 
+	JR	NZ, notrwbw
+	INC	HL
+	LD	A, (HL)
+	CP	RWBW_MAGIC_2 
+	JR	NZ, notrwbw
+	INC	HL
+	LD	A, (HL)
+	POP	HL
+	RET
+
+notrwbw:
+	POP	HL
+	LD	A, 0
+	RET
+
+;------------------------------------------------------------------------
+; rwbw_invoke
+;------------------------------------------------------------------------
+rwbw_invoke:
+	; We can also invoke ROMWBW using 'RST 8'. I'm not sure when to
+	;   prefer one approach over the other
+	CALL	0FFF0h
+	RET
+
+;------------------------------------------------------------------------
+; .bcd2bin 
+; A helper function for doing BCD->binary, on the 8-bit value in A.
+; Other registers are preserved
+;------------------------------------------------------------------------
+bcd2bin:
+	PUSH	BC	
+	LD	C,A
+	AND	0F0H
+	SRL	A
+	LD	B,A
+	SRL	A
+	SRL	A
+	ADD	A,B
+	LD	B,A
+	LD	A,C
+	AND	0FH
+	ADD	A,B
+	POP	BC
+	RET
+
+;------------------------------------------------------------------------
+; rwbw_cout
+; A - character
+; C - character unit number
+; Return error code in A
+;------------------------------------------------------------------------
+rwbw_cout:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD 	B, RWBW_COUT 
+	LD	E, A
+	CALL 	rwbw_invoke
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+;------------------------------------------------------------------------
+; rwbw_cin
+; C - character unit number
+; Return error code in A, character in E
+;------------------------------------------------------------------------
+rwbw_cin:
+	PUSH	BC
+	PUSH	HL
+	LD 	B, RWBW_CIN
+	CALL 	rwbw_invoke
+	POP	HL
+	POP	BC
+	RET
+
+;------------------------------------------------------------------------
+; rwbw_cstat
+; C - character unit number
+; Return character code in A
+;------------------------------------------------------------------------
+rwbw_cstat:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD 	B, RWBW_CSTAT
+	CALL 	rwbw_invoke
+        ; A contains a positive, non-zero number of chars are ready
+	;   or a negative error code
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+
+;------------------------------------------------------------------------
+; rwbw_getrtc
+;------------------------------------------------------------------------
+rwbw_getrtc:
+
+	; First, let's check that we're actually on ROMWBW. The next 
+	;  steps will cause a crash if we're not.
+	LD 	A, -1 
+        CALL	rwbw_chk
+	OR	A
+	JR	Z, nortc	
+
+	; ROMWBW docs say that no registers are preserved in API 
+        ;  calls
+	PUSH	HL
+	PUSH	DE
+	PUSH 	BC
+	LD	B, RWBW_GRTC ; Get RTC API -- output buffer is in HL
+        CALL	rwbw_invoke
+	POP	BC	
+	POP	DE
+	POP	HL
+
+	PUSH	HL
+	PUSH	AF
+
+	; The GETRTC API writes six values at HL to HL+5, and all are in BCD.
+	; We need to convert them into ordinary binary. Maybe some sort of
+ 	;   loop might be in order ;)
+	LD	A, (HL)
+	CALL	bcd2bin
+	LD	(HL), A;
+	INC	HL
+	LD	A, (HL)
+	CALL	bcd2bin
+	LD	(HL), A;
+	INC	HL
+	LD	A, (HL)
+	CALL	bcd2bin
+	LD	(HL), A;
+	INC	HL
+	LD	A, (HL)
+	CALL	bcd2bin
+	LD	(HL), A;
+	INC	HL
+	LD	A, (HL)
+	CALL	bcd2bin
+	LD	(HL), A;
+	INC	HL
+	LD	A, (HL)
+	CALL	bcd2bin
+	LD	(HL), A;
+	INC	HL
+
+	; The value of AF we pop here should be the value that was pushed after the
+	;   call to rwbw_invoke, and should contain an error code. However, I've 
+        ;   found that sometimes the error code is zero even when there's no
+	;   hardware
+	POP	AF
+	POP	HL
+
+ 	RET
+
+nortc:
+	LD 	A, -1 
+	RET
+
+;------------------------------------------------------------------------
+; _rwbw_chk
+; C wrapper for rwbw_chk 
+;------------------------------------------------------------------------
+_rwbw_chk:
+	CALL 	rwbw_chk
+	LD H, 	0
+	LD L, 	A
+	RET
+
+;------------------------------------------------------------------------
+; _rwbw_getrtc
+; C wrapper for rwbw_getrtc
+;------------------------------------------------------------------------
+_rwbw_getrtc:
+	; Get first arg into HL
+	LD	HL, 2
+	ADD	HL, SP
+	LD	E, (HL)
+	INC	HL
+	LD	D, (HL)
+	LD	H, D
+	LD	L, E
+	CALL 	rwbw_getrtc
+	LD	HL, 0
+	CP	0FFH
+	JR	NZ, getrtcok
+	LD 	HL, 0FFFFH
+getrtcok:
+	RET
+
+;------------------------------------------------------------------------
+; _rwbw_cin
+; C wrapper for rwbw_cin
+;------------------------------------------------------------------------
+_rwbw_cin:
+	LD	HL, 2
+	ADD	HL, SP
+	; Get first arg (char unit) into C	
+	LD	C, (HL) 
+	CALL	rwbw_cin
+	; A contains error code, E contains character
+	; Get return value into HL
+	LD H, 	A
+	LD L, 	E
+	RET
+
+;------------------------------------------------------------------------
+; _rwbw_cout
+; C wrapper for rwbw_cout
+;------------------------------------------------------------------------
+_rwbw_cout:
+	LD	HL, 2
+	ADD	HL, SP
+	; Get first arg (char unit) into C	
+	LD	C, (HL) 
+	INC	HL
+	INC	HL
+	; Get second arg (character) into A
+	LD	A, (HL)
+	CALL	rwbw_cout
+	; Get return value into HL
+	LD H, 	0
+	LD L, 	A
+	RET
+
+;------------------------------------------------------------------------
+; _rwbw_cstat
+; C wrapper for rwbw_cstat
+;------------------------------------------------------------------------
+_rwbw_cstat:
+	LD	HL, 2
+	ADD	HL, SP
+	; Get first arg (char unit) into C	
+	LD	C, (HL) 
+	CALL	rwbw_cstat
+	; Get return value into HL
+	LD H, 	0
+	LD L, 	A
+	AND	080H
+	JR	Z, posi
+	LD	H, 0FFH
+posi:
+	RET
+
+tmprtc: 
+	defb 0, 0, 0, 0, 0, 0
+
+end
+

@@ -1,0 +1,5 @@
+Check the console, both when output is proceeding and when it is block by flow control, so the
+user can interrupt the transfer.
+
+Print status updates.
+

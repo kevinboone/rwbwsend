@@ -1,0 +1,23 @@
+rwbwsend
+========
+
+Send a text file to a numbered serial port, respecting XON/XOFF flow control.
+This utility is for CP/M machines with ROMWBW firmware.
+
+Usage
+-----
+rwbwsend {/c N} {/v} {/h} {files...}
+
+The /c switch specifies the serial port number (0-128). If not given, 
+or if the number does not correspond to a device, output is to the
+primary console. The ROMWBW implementation of CP/M has a utility MODE
+that will list the installed serial ports. These are listed as
+'com0', 'com1'... but this utility expects only the number, not the 'com'.
+
+Limitations
+-----------
+Only works with text files, because CTRL-Z is taken to indicate end-of-file.
+There is no progress indication. The transfer cannot be stopped from the
+console. Although not the fault of this utility, enabling XON/XOFF flow
+control on the target device can be tricky.
+
